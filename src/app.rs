@@ -1,9 +1,8 @@
-use std::borrow::{Borrow, BorrowMut};
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::ops::Add;
+use std::borrow::Borrow;
+use std::collections::{HashMap, HashSet};
+use std::ops::Index;
 use eframe::{egui, epi};
-use eframe::egui::{InnerResponse, Ui, Vec2};
+use eframe::egui::{Ui};
 use crate::app::MinTermState::{DontCare, One};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -15,14 +14,14 @@ pub struct TemplateApp {
     table: Vec<HashMap<u32, Vec<MinTerm>>>,
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 enum MinTermState {
     Zero,
     One,
     DontCare,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 struct MinTerm {
     original: Vec<i32>,
     digit: Vec<MinTermState>,
@@ -75,16 +74,30 @@ impl epi::App for TemplateApp {
                 ui.text_edit_singleline(label);
             });
             if ui.button("Optimieren").clicked() {
-                let mut parsed_table = parse_string(label);
+                let parsed_table = parse_string(label);
                 *table = find_all_primimplikante(parsed_table);
             }
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            for t in table {
-                show_quine_table(t, ui);
-            }
+            egui::ScrollArea::new([false, true]).show(ui, |ui| {
+                for t in table.iter_mut() {
+                    show_quine_table(t, ui);
+                }
+                let mut prim = list_primimplikants(&table);
+                simplifyTable(&mut prim);
+                let mut u = 'A' as u8;
+                for term in prim {
+                    ui.label(format!("{}", (u as char)));
+                    ui.horizontal(|ui| {
+                        for num in &term.original {
+                            ui.label(format!("{},", num));
+                        }
+                    });
+                    u += 1;
+                }
+            });
             egui::warn_if_debug_build(ui);
         });
     }
@@ -103,7 +116,7 @@ impl epi::App for TemplateApp {
 }
 
 fn show_quine_table(table: &HashMap<u32, Vec<MinTerm>>, ui: &mut Ui) {
-    egui::Grid::new("unique ID").show(ui, |ui| {
+    egui::Grid::new("unique ID").min_col_width(200f32).show(ui, |ui| {
         ui.label("Group");
         ui.label("MinTerm");
         if table.capacity() > 0 {
@@ -140,25 +153,95 @@ fn show_quine_table(table: &HashMap<u32, Vec<MinTerm>>, ui: &mut Ui) {
             }
         }
     });
+    ui.horizontal(|ui| ui.separator());
 }
 
-fn find_all_primimplikante(mut input: HashMap<u32, Vec<MinTerm>>) -> Vec<HashMap<u32, Vec<MinTerm>>> {
+fn simplifyTable(input: &mut Vec<MinTerm>) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        changed = eliminate_vertical(input) || changed;
+    }
+}
+
+//      0,1,4,8,5,6,9,7,11,15
+fn eliminate_vertical(input: &mut Vec<MinTerm>) -> bool {
+    let mut essential: Vec<i32> = vec![];
+    let mut found = true;
+    let mut operations = 0;
+    while found {
+        found = false;
+        let mut deletion_term: MinTerm = MinTerm { original: vec![], is_primimplikant: true, digit: vec![] };
+        for term in input.iter() {
+            for min in &term.original {
+                if !essential.contains(min) && contained_by_only_one(*min, input) {
+                    essential.push(*min);
+                    found = true;
+                    deletion_term = copy_min_term(term);
+                    break;
+                }
+            }
+            if found {
+                break;
+            }
+        }
+        if found {
+            for term in input.iter_mut() {
+                for to_remove in &*deletion_term.original {
+                    if term.original.contains(&to_remove) && !essential.contains(&to_remove) {
+                        term.original.remove(term.original.iter().position(|&r| r == *to_remove).unwrap());
+                        operations += 1;
+                    }
+                }
+            }
+        }
+    }
+    operations > 0
+}
+
+fn contained_by_only_one(num: i32, input: &Vec<MinTerm>) -> bool {
+    let mut count = 0;
+    for t in input {
+        for i in &t.original {
+            if num == *i {
+                count += 1;
+            }
+        }
+    }
+    count == 1
+}
+
+fn list_primimplikants(input: &Vec<HashMap<u32, Vec<MinTerm>>>) -> Vec<MinTerm> {
+    let mut primimplikants: Vec<MinTerm> = vec![];
+    for t in input {
+        for terms_list in t.values() {
+            for term in terms_list {
+                if term.is_primimplikant {
+                    primimplikants.push(copy_min_term(term));
+                }
+            }
+        }
+    }
+    primimplikants
+}
+
+fn find_all_primimplikante(input: HashMap<u32, Vec<MinTerm>>) -> Vec<HashMap<u32, Vec<MinTerm>>> {
     let mut table: Vec<HashMap<u32, Vec<MinTerm>>> = vec![];
     table.push(input);
-    let mut currentIndex = 0;
+    let mut current_index = 0;
     let mut was_simplified = true;
     while was_simplified {
-        let primImplikant: (HashMap<u32, Vec<MinTerm>>, bool) = find_primImplikante(table.get_mut(currentIndex).unwrap());
-        was_simplified = primImplikant.1;
+        let primimplikant: (HashMap<u32, Vec<MinTerm>>, bool) = find_prim_implikante(table.get_mut(current_index).unwrap());
+        was_simplified = primimplikant.1;
         if was_simplified {
-            table.push(primImplikant.0);
-            currentIndex += 1;
+            table.push(primimplikant.0);
+            current_index += 1;
         }
     }
     table
 }
 
-fn find_primImplikante(input: &mut HashMap<u32, Vec<MinTerm>>) -> (HashMap<u32, Vec<MinTerm>>, bool) {
+fn find_prim_implikante(input: &mut HashMap<u32, Vec<MinTerm>>) -> (HashMap<u32, Vec<MinTerm>>, bool) {
     let mut table: HashMap<u32, Vec<MinTerm>> = HashMap::new();
     let mut found_something = false;
     for index in 0..find_max_index(input) + 1 {
@@ -184,23 +267,42 @@ fn find_primImplikante(input: &mut HashMap<u32, Vec<MinTerm>>) -> (HashMap<u32, 
             input.insert(index + 1, min_terms_bigger);
         }
     }
-    for index in 0..find_max_index(&table)+1{
-        if table.contains_key(&index){
-            let list=table.get_mut(&index).unwrap();
-            list.dedup();
+    for index in 0..find_max_index(&table) + 1 {
+        if table.contains_key(&index) {
+            let list = table.get_mut(&index).unwrap();
+            //manual dedup
+            let mut dedup_found = true;
+            while dedup_found {
+                dedup_found = false;
+                for index in 0..list.len() {
+                    for control in index + 1..list.len() {
+                        if list[index] == list[control] {
+                            list.remove(control);
+                            dedup_found = true;
+                            break;
+                        }
+                    }
+                    if dedup_found {
+                        break;
+                    }
+                }
+            }
+            if list.len() == 0 {
+                table.remove(&index);
+            }
         }
     }
     (table, found_something)
 }
 
 fn find_max_index(table: &HashMap<u32, Vec<MinTerm>>) -> u32 {
-    let mut maxIndex = 0;
+    let mut max_index = 0;
     for key in table.keys() {
-        if maxIndex < *key {
-            maxIndex = *key;
+        if max_index < *key {
+            max_index = *key;
         }
     }
-    maxIndex
+    max_index
 }
 
 fn parse_string(input: &str) -> HashMap<u32, Vec<MinTerm>> {
@@ -214,7 +316,7 @@ fn parse_string(input: &str) -> HashMap<u32, Vec<MinTerm>> {
     let bits = log_2(max);
     let mut table: HashMap<u32, Vec<MinTerm>> = HashMap::new();
     for term in min_terms {
-        let mut ones = term.count_ones();
+        let ones = term.count_ones();
         let min_term = parse_min_term(term, &bits);
         if table.get(&ones).is_none() {
             table.insert(ones, vec![]);
@@ -275,6 +377,18 @@ fn merge(min1: &MinTerm, min2: &MinTerm) -> MinTerm {
     }
     merged
 }
+
+fn copy_min_term(term: &MinTerm) -> MinTerm {
+    let mut merged = MinTerm { original: vec![], is_primimplikant: term.is_primimplikant, digit: vec![] };
+    for o in &term.original {
+        merged.original.push(*o);
+    }
+    for i in 0..term.digit.len() {
+        merged.digit.push(term.digit[i]);
+    }
+    merged
+}
+
 
 fn log_2(x: i32) -> u32 {
     assert!(x > 0);
