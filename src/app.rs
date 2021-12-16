@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Index;
 use eframe::{egui, epi};
 use eframe::egui::{Ui};
-use crate::app::MinTermState::{DontCare, One};
+use crate::app::MinTermState::{DontCare, One, Zero};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[cfg_attr(feature = "persistence", derive(serde::Deserialize, serde::Serialize))]
@@ -82,20 +82,29 @@ impl epi::App for TemplateApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             egui::ScrollArea::new([false, true]).show(ui, |ui| {
-                for t in table.iter_mut() {
-                    show_quine_table(t, ui);
-                }
                 let mut prim = list_primimplikants(&table);
-                simplifyTable(&mut prim);
-                let mut u = 'A' as u8;
-                for term in prim {
-                    ui.label(format!("{}", (u as char)));
+                if prim.len() > 0 {
+                    for t in table.iter_mut() {
+                        show_quine_table(t, ui);
+                    }
+                    simplifyTable(&mut prim);
+                    let mut u = 'A' as u8;
                     ui.horizontal(|ui| {
-                        for num in &term.original {
-                            ui.label(format!("{},", num));
+                        ui.label("F = ");
+                        for i in 0..prim.len() {
+                            let term = &prim[i];
+                            for k in 0..term.digit.len() {
+                                if term.digit[k] != DontCare {
+                                    let letter = (k + 'A' as usize) as u8 as char;
+                                    let negated = if term.digit[k] == Zero { "'" } else { "" };
+                                    ui.label(format!("{}{}", letter, negated));
+                                }
+                            }
+                            if i < prim.len() - 1 {
+                                ui.label(" + ");
+                            }
                         }
                     });
-                    u += 1;
                 }
             });
             egui::warn_if_debug_build(ui);
@@ -161,6 +170,7 @@ fn simplifyTable(input: &mut Vec<MinTerm>) {
     while changed {
         changed = false;
         changed = eliminate_vertical(input) || changed;
+        changed = eleminate_horizontal(input) || changed;
     }
 }
 
@@ -197,6 +207,48 @@ fn eliminate_vertical(input: &mut Vec<MinTerm>) -> bool {
         }
     }
     operations > 0
+}
+
+fn eleminate_horizontal(input: &mut Vec<MinTerm>) -> bool {
+    let mut found = true;
+    let mut operations = 0;
+    while found {
+        found = false;
+        //remove empty lines
+        for index in 0..input.len() {
+            if input[index].original.len() == 0 {
+                found = true;
+                input.remove(index);
+                break;
+            }
+        }
+        //remove dominated lines
+        if !found {
+            for dominatorIndex in 0..input.len() {
+                for rezesivIndex in dominatorIndex + 1..input.len() {
+                    if minterm_dominates(&input[dominatorIndex], &input[rezesivIndex]) {
+                        found = true;
+                        input.remove(rezesivIndex);
+                        operations += 1;
+                        break;
+                    }
+                }
+                if found {
+                    break;
+                }
+            }
+        }
+    }
+    operations > 0
+}
+
+fn minterm_dominates(dominator: &MinTerm, rezesiv: &MinTerm) -> bool {
+    for min in &rezesiv.original {
+        if !dominator.original.contains(min) {
+            return false;
+        }
+    }
+    true
 }
 
 fn contained_by_only_one(num: i32, input: &Vec<MinTerm>) -> bool {
