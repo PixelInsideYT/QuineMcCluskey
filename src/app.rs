@@ -1,6 +1,4 @@
-use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
-use std::ops::Index;
+use std::collections::{HashMap};
 use eframe::{egui, epi};
 use eframe::egui::{Ui};
 use crate::app::MinTermState::{DontCare, One, Zero};
@@ -87,8 +85,7 @@ impl epi::App for TemplateApp {
                     for t in table.iter_mut() {
                         show_quine_table(t, ui);
                     }
-                    simplifyTable(&mut prim);
-                    let mut u = 'A' as u8;
+                    simplify_table(&mut prim);
                     ui.horizontal(|ui| {
                         ui.label("F = ");
                         for i in 0..prim.len() {
@@ -165,7 +162,7 @@ fn show_quine_table(table: &HashMap<u32, Vec<MinTerm>>, ui: &mut Ui) {
     ui.horizontal(|ui| ui.separator());
 }
 
-fn simplifyTable(input: &mut Vec<MinTerm>) {
+fn simplify_table(input: &mut Vec<MinTerm>) {
     let mut changed = true;
     while changed {
         changed = false;
@@ -224,11 +221,11 @@ fn eleminate_horizontal(input: &mut Vec<MinTerm>) -> bool {
         }
         //remove dominated lines
         if !found {
-            for dominatorIndex in 0..input.len() {
-                for rezesivIndex in dominatorIndex + 1..input.len() {
-                    if minterm_dominates(&input[dominatorIndex], &input[rezesivIndex]) {
+            for dominator_index in 0..input.len() {
+                for recessive_index in dominator_index + 1..input.len() {
+                    if minterm_dominates(&input[dominator_index], &input[recessive_index]) {
                         found = true;
-                        input.remove(rezesivIndex);
+                        input.remove(recessive_index);
                         operations += 1;
                         break;
                     }
